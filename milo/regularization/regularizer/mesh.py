@@ -532,6 +532,7 @@ def compute_mesh_regularization(
             )
         ):
             print(f"[INFO] Resetting occupancy labels at iteration {iteration}.")
+            torch.cuda.memory.empty_cache()
             voronoi_occupancy_labels, _ = evaluate_mesh_occupancy(
                 points=voronoi_points,
                 views=scene.getTrainCameras().copy(),
