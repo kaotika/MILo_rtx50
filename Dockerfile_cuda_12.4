@@ -30,6 +30,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     && uv pip install ninja cmake
 
 # 5) Install PyTorch 2.5.1+cu124 (official wheels for CUDA 12.4)
+# https://pytorch.org/get-started/previous-versions/
 ARG PYTORCH_INDEX=https://download.pytorch.org/whl/cu124
 ARG TORCH_VERSION=2.5.1+cu124
 RUN set -eux; \
@@ -106,7 +107,7 @@ ENV NVDIFRAST_BACKEND=cuda \
     MILO_MESH_RES_SCALE=0.3 \
     MILO_RAST_TRI_CHUNK=150000
 
-RUN apt-get update && apt-get install -y openssh-server unp unzip nvtop bmon htop screen libnvidia-gl-570-server rclone && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y openssh-server unp unzip nvtop bmon htop screen rclone && rm -rf /var/lib/apt/lists/*
 
 # 11) Default workdir and shell
 WORKDIR /workspace/MILo
