@@ -21,7 +21,7 @@ _build-image PUSH="false" IMAGE_TAG="cuda_12.8-torch_2.7.1-ubuntu2404" DOCKERFIL
     if {{ PUSH }}; then
         ARGS+=(--push)
     fi
-    echo docker build --file {{ DOCKERFILE }} ${ARGS[@]} --build-arg REPO_URL={{ REPO_URL }} --tag {{ IMAGE_NAME }}:{{ IMAGE_TAG }} .
+    docker build --file {{ DOCKERFILE }} ${ARGS[@]} --build-arg REPO_URL={{ REPO_URL }} --tag {{ IMAGE_NAME }}:{{ IMAGE_TAG }} .
 
 build-image-cuda128 PUSH="false" IMAGE_TAG="cuda_12.8-torch_2.7.1-ubuntu2404": (_build-image PUSH IMAGE_TAG "Dockerfile_cuda_12.8" REPO_URL IMAGE_NAME)
 build-image-cuda124 PUSH="false" IMAGE_TAG="cuda_12.4-torch_2.5.1-ubuntu2204": (_build-image PUSH IMAGE_TAG "Dockerfile_cuda_12.4" REPO_URL IMAGE_NAME)
