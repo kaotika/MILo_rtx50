@@ -1,0 +1,113 @@
+# MILo RTX50 image: Ubuntu 24.04 + CUDA 12.8 + Python 3.12 (uv) + PyTorch 2.7.1+cu128
+
+
+# 1) Base OS + CUDA Toolkit 12.8 (includes NVCC)
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    UV_NO_CACHE=1 \
+    CUDA_HOME=/usr/local/cuda
+
+# 2) System packages (C/C++ toolchain and libs for CGAL triangulation, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git git-lfs curl ca-certificates \
+    build-essential cmake ninja-build pkg-config \
+    python3 python3-venv python3-pip \
+    nano \
+    libgmp-dev libmpfr-dev libcgal-dev libboost-all-dev libeigen3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 3) Install uv (Python package/deps manager) and create venv (Python 3.12)
+ENV VENV_PATH=/opt/venv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -sf /root/.local/bin/uv /usr/local/bin/uv \
+    && python3 -m venv "$VENV_PATH"
+ENV PATH="$VENV_PATH/bin:/usr/local/cuda/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+
+# 4) Seed basic Python build tooling inside venv
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && uv pip install ninja cmake
+
+# 5) Install PyTorch 2.7.1+cu128 (official wheels for CUDA 12.8)
+ARG PYTORCH_INDEX=https://download.pytorch.org/whl/cu128
+ARG TORCH_VERSION=2.7.1+cu128
+RUN set -eux; \
+    uv pip install --index-url "$PYTORCH_INDEX" torch=="$TORCH_VERSION"
+
+# 6) Clone MILo fork repository (override via --build-arg)
+ARG REPO_URL=https://github.com/MrZoyo/MILo_rtx50.git
+ARG REPO_BRANCH=master
+WORKDIR /workspace
+RUN git clone --recursive -b "$REPO_BRANCH" "$REPO_URL" MILo \
+    && cd MILo \
+    && git lfs install --system \
+    && git submodule update --init --recursive \
+    && git lfs fetch --all || true \
+    && git lfs checkout || true
+
+WORKDIR /workspace/MILo
+
+# 7) Python deps (project requirements) via uv
+# If the fork uses pyproject/requirements, this will install them. Safe if missing.
+RUN if [ -f requirements.txt ]; then \
+            printf 'torch==%s\n' "$TORCH_VERSION" > /tmp/constraints.txt; \
+            uv pip install -r requirements.txt --constraint /tmp/constraints.txt; \
+        fi
+
+# Ensure CUDA arch list is present before building CUDA extensions (submodules)
+# version codes: https://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/
+ENV TORCH_CUDA_ARCH_LIST="7.0+PTX 7.2+PTX 7.5+PTX 8.6+PTX 8.9+PTX 9.0+PTX 10.0+PTX 10.1+PTX 12.0+PTX"
+
+# 7.5) Install nvdiffrast (CUDA backend). Use GitHub source to avoid index resolution issues.
+RUN NVDIFRAST_BACKEND=cuda uv pip install --no-build-isolation \
+    git+https://github.com/NVlabs/nvdiffrast.git
+
+# 8) Install Gaussian Splatting submodules as wheels
+RUN set -eux; \
+    if [ -d submodules/diff-gaussian-rasterization_ms ]; then uv pip install --no-build-isolation submodules/diff-gaussian-rasterization_ms; fi; \
+    if [ -d submodules/diff-gaussian-rasterization ]; then uv pip install --no-build-isolation submodules/diff-gaussian-rasterization; fi; \
+    if [ -d submodules/diff-gaussian-rasterization_gof ]; then uv pip install --no-build-isolation submodules/diff-gaussian-rasterization_gof; fi; \
+    if [ -d submodules/simple-knn ]; then uv pip install --no-build-isolation submodules/simple-knn; fi; \
+    if [ -d submodules/fused-ssim ]; then uv pip install --no-build-isolation submodules/fused-ssim; fi
+
+# 9) Build tetra_triangulation with ABI=1 enforcement if needed, then install editable
+RUN set -eux; \
+    if [ -d submodules/tetra_triangulation ]; then \
+      cd submodules/tetra_triangulation; \
+      mkdir -p src; \
+      # Create ABI header if not present and include it at top of key sources
+      if ! grep -q "_GLIBCXX_USE_CXX11_ABI" src/force_abi.h 2>/dev/null; then \
+        printf '#pragma once\n#if defined(_GLIBCXX_USE_CXX11_ABI)\n#  undef _GLIBCXX_USE_CXX11_ABI\n#endif\n#define _GLIBCXX_USE_CXX11_ABI 1\n' > src/force_abi.h; \
+      fi; \
+      for f in src/py_binding.cpp src/triangulation.cpp; do \
+        if [ -f "$f" ] && ! head -n 1 "$f" | grep -q 'force_abi.h'; then sed -i '1i #include "force_abi.h"' "$f"; fi; \
+      done; \
+      rm -rf build CMakeCache.txt CMakeFiles tetranerf/utils/extension/tetranerf_cpp_extension*.so || true; \
+            CMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"; \
+            TORCH_LIB_DIR="$(python -c 'import os, torch; import os.path as p; print(p.join(p.dirname(torch.__file__), "lib"))')"; \
+            export LD_LIBRARY_PATH="$TORCH_LIB_DIR:$LD_LIBRARY_PATH"; \
+            export CPATH="/usr/local/cuda/include:${CPATH:-}"; \
+            export LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/lib64/stubs:${LIBRARY_PATH:-}"; \
+            cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+                -DCUDAToolkit_ROOT=/usr/local/cuda -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda .; \
+      cmake --build . -j"$(nproc)"; \
+      uv pip install -e .; \
+    fi
+
+# 10) Runtime env defaults (tunable at docker run)
+ENV NVDIFRAST_BACKEND=cuda \
+    # version codes: https://arnon.dk/matching-sm-architectures-arch-and-gencode-for-various-nvidia-cards/
+    TORCH_CUDA_ARCH_LIST="7.0+PTX 7.2+PTX 7.5+PTX 8.0+PTX 8.6+PTX 8.9+PTX 9.0+PTX 10.0+PTX 10.1+PTX 12.0+PTX" \
+    # parameters: https://docs.pytorch.org/docs/stable/notes/cuda.html
+    PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True,max_split_size_mb:32,garbage_collection_threshold:0.6" \
+    CUDA_DEVICE_MAX_CONNECTIONS=1 \
+    MILO_MESH_RES_SCALE=0.3 \
+    MILO_RAST_TRI_CHUNK=150000
+
+RUN apt-get update && apt-get install -y openssh-server unp unzip nvtop bmon htop screen libnvidia-gl-570-server rclone && rm -rf /var/lib/apt/lists/*
+
+# 11) Default workdir and shell
+WORKDIR /workspace/MILo
+CMD ["sleep", "infinity"]
