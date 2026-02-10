@@ -52,9 +52,9 @@ WORKDIR /workspace/MILo
 
 # 7) Python deps (project requirements) via uv
 # If the fork uses pyproject/requirements, this will install them. Safe if missing.
-RUN if [ -f requirements.txt ]; then \
+RUN if [ -f requirements.cuda130.txt ]; then \
             printf 'torch==%s\n' "$TORCH_VERSION" > /tmp/constraints.txt; \
-            uv pip install -r requirements.txt --constraint /tmp/constraints.txt; \
+            uv pip install -r requirements.cuda130.txt --constraint /tmp/constraints.txt; \
         fi
 
 # Ensure CUDA arch list is present before building CUDA extensions (submodules)

@@ -1,0 +1,20 @@
+# Core dependencies
+# check versions: https://pytorch.org/get-started/previous-versions/
+torch==2.9.1
+torchvision==0.24.1
+torchaudio==2.9.1
+numpy==2.4.1
+pillow==11.3.0
+scipy==1.17.0
+
+# Computer Vision and 3D processing
+open3d==0.19.0
+trimesh==4.6.8
+pymeshlab==2025.7
+scikit-image==0.24.0
+opencv-python==4.11.0.86
+plyfile==1.1
+
+# Utilities
+tqdm==4.67.3
+matplotlib==3.10.0
